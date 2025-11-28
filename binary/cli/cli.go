@@ -38,6 +38,7 @@ import (
 	"github.com/google/osv-scalibr/detector"
 	"github.com/google/osv-scalibr/extractor/filesystem"
 	scalibrfs "github.com/google/osv-scalibr/fs"
+	"github.com/google/osv-scalibr/fs/gitfs"
 	"github.com/google/osv-scalibr/log"
 	"github.com/google/osv-scalibr/plugin"
 	pl "github.com/google/osv-scalibr/plugin/list"
@@ -152,6 +153,10 @@ type Flags struct {
 	WindowsAllDrives      bool
 	Offline               bool
 	AllowUnsafePlugins    bool
+	LocalRegistry         string
+	DisableGoogleAuth     bool
+	Repo                  string
+	RepoCommit            string
 }
 
 var supportedOutputFormats = []string{
@@ -193,6 +198,21 @@ func ValidateFlags(flags *Flags) error {
 	}
 	if flags.ImageLocal != "" && flags.ImageTarball != "" {
 		return errors.New("image-local-docker cannot be used with --image-tarball")
+	}
+	if flags.Repo != "" && flags.RemoteImage != "" {
+		return errors.New("--repo cannot be used with --remote-image")
+	}
+	if flags.Repo != "" && flags.ImageTarball != "" {
+		return errors.New("--repo cannot be used with --image-tarball")
+	}
+	if flags.Repo != "" && flags.ImageLocal != "" {
+		return errors.New("--repo cannot be used with --image-local-docker")
+	}
+	if flags.Repo != "" && flags.Root != "" {
+		return errors.New("--repo cannot be used with --root")
+	}
+	if flags.RepoCommit != "" && flags.Repo == "" {
+		return errors.New("--repo-commit cannot be used without --repo")
 	}
 	if err := validateResultPath(flags.ResultFile); err != nil {
 		return fmt.Errorf("--result %w", err)
@@ -613,6 +633,14 @@ func (f *Flags) scanRoots() ([]*scalibrfs.ScanRoot, error) {
 		return []*scalibrfs.ScanRoot{{FS: fs, Path: ""}}, nil
 	}
 
+	if f.Repo != "" {
+		fs, err := gitfs.New(f.Repo, f.RepoCommit)
+		if err != nil {
+			return nil, err
+		}
+		return []*scalibrfs.ScanRoot{{FS: fs, Path: ""}}, nil
+	}
+
 	if len(f.Root) != 0 {
 		return scalibrfs.RealFSScanRoots(f.Root), nil
 	}
@@ -662,6 +690,14 @@ func (f *Flags) capabilities() *plugin.Capabilities {
 	network := plugin.NetworkOnline
 	if f.Offline {
 		network = plugin.NetworkOffline
+	}
+	if f.Repo != "" {
+		return &plugin.Capabilities{
+			OS:            plugin.OSLinux,
+			Network:       network,
+			DirectFS:      false,
+			RunningSystem: false,
+		}
 	}
 	if f.RemoteImage != "" {
 		// We're scanning a Linux container image whose filesystem is mounted to the host's disk.
