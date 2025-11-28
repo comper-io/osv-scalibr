@@ -246,6 +246,50 @@ func TestValidateFlags(t *testing.T) {
 			},
 			wantErr: cmpopts.AnyError,
 		},
+		{
+			desc: "Repo with Root",
+			flags: &cli.Flags{
+				Repo:       "/tmp/repo",
+				Root:       "/",
+				ResultFile: "result.textproto",
+			},
+			wantErr: cmpopts.AnyError,
+		},
+		{
+			desc: "Repo with RemoteImage",
+			flags: &cli.Flags{
+				Repo:        "/tmp/repo",
+				RemoteImage: "alpine",
+				ResultFile:  "result.textproto",
+			},
+			wantErr: cmpopts.AnyError,
+		},
+		{
+			desc: "Repo with ImageTarball",
+			flags: &cli.Flags{
+				Repo:         "/tmp/repo",
+				ImageTarball: "image.tar",
+				ResultFile:   "result.textproto",
+			},
+			wantErr: cmpopts.AnyError,
+		},
+		{
+			desc: "RepoCommit without Repo",
+			flags: &cli.Flags{
+				RepoCommit: "abcdef",
+				Root:       "/",
+				ResultFile: "result.textproto",
+			},
+			wantErr: cmpopts.AnyError,
+		},
+		{
+			desc: "Valid Repo",
+			flags: &cli.Flags{
+				Repo:       "/tmp/repo",
+				ResultFile: "result.textproto",
+			},
+			wantErr: nil,
+		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
 			err := cli.ValidateFlags(tc.flags)

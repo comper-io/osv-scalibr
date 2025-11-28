@@ -103,6 +103,10 @@ func parseFlags(args []string, fs *flag.FlagSet) (*cli.Flags, error) {
 	windowsAllDrives := fs.Bool("windows-all-drives", false, "Scan all drives on Windows")
 	offline := fs.Bool("offline", false, "Offline mode: Run only plugins that don't require network access")
 	allowUnsafePlugins := fs.Bool("allow-unsafe-plugins", false, "Allows enablement of unsafe plugins which could trigger Remote Code Execution when run on malicious input. Make sure you're running SCALIBR on trusted artifacts before enabling this setting.")
+	localRegistry := fs.String("local-registry", "", "The local directory to store the downloaded manifests during dependency resolution.")
+	disableGoogleAuth := fs.Bool("disable-google-auth", false, "Disables the use of Google Application Default Credentials for authenticating with Google Artifact Registry.")
+	repo := fs.String("repo", "", "The path to the bare git repository to scan.")
+	repoCommit := fs.String("repo-commit", "", "The commit hash to checkout in the git repository. If not specified, HEAD is used.")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -145,6 +149,10 @@ func parseFlags(args []string, fs *flag.FlagSet) (*cli.Flags, error) {
 		WindowsAllDrives:      *windowsAllDrives,
 		Offline:               *offline,
 		AllowUnsafePlugins:    *allowUnsafePlugins,
+		LocalRegistry:         *localRegistry,
+		DisableGoogleAuth:     *disableGoogleAuth,
+		Repo:                  *repo,
+		RepoCommit:            *repoCommit,
 	}
 	if err := cli.ValidateFlags(flags); err != nil {
 		return nil, err
