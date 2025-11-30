@@ -289,6 +289,25 @@ func (f *openFile) Read(p []byte) (int, error) {
 	return n, err
 }
 
+func (f *openFile) Seek(offset int64, whence int) (int64, error) {
+	var abs int64
+	switch whence {
+	case io.SeekStart:
+		abs = offset
+	case io.SeekCurrent:
+		abs = f.offset + offset
+	case io.SeekEnd:
+		abs = f.info.Size() + offset
+	default:
+		return 0, fmt.Errorf("gitfs.openFile.Seek: invalid whence")
+	}
+	if abs < 0 {
+		return 0, fmt.Errorf("gitfs.openFile.Seek: negative position")
+	}
+	f.offset = abs
+	return abs, nil
+}
+
 func (f *openFile) Close() error {
 	return nil
 }
