@@ -33,6 +33,7 @@ import (
 	"github.com/google/osv-scalibr/extractor/filesystem/ffa/unknownbinariesextr"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/cpp/conanlock"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/dart/pubspec"
+	"github.com/google/osv-scalibr/extractor/filesystem/language/dotnet/csproj"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/dotnet/depsjson"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/dotnet/dotnetpe"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/dotnet/packagesconfig"
@@ -277,6 +278,7 @@ var (
 	}
 	// DotnetSource extractors for Dotnet (.NET).
 	DotnetSource = InitMap{
+		csproj.Name:           {csproj.NewFromPluginConfig},
 		depsjson.Name:         {depsjson.New},
 		packagesconfig.Name:   {packagesconfig.New},
 		packageslockjson.Name: {packageslockjson.New},

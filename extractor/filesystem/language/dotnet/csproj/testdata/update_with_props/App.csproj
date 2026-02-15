@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Update="LiteDB" />
+    <PackageReference Include="DirectPkg" Version="1.0.0" />
+  </ItemGroup>
+</Project>
