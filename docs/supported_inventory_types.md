@@ -85,6 +85,7 @@ See the docs on [how to add a new Extractor](/docs/new_extractor.md).
 |            | Julia installed packages (Manifest.toml)          | `julia/manifesttoml`                 |
 | Lua        | Luarocks modules                                  | `lua/luarocks`                       |
 | ObjectiveC | Podfile.lock                                      | `swift/podfilelock`                  |
+| Perl       | Perl CPAN packages                                | `perl/cpan`                          |
 | PHP        | Composer                                          | `php/composerlock`                   |
 | Python     | Installed PyPI packages (global and venv)         | `python/wheelegg`                    |
 |            | requirements.txt                                  | `python/requirements`                |
