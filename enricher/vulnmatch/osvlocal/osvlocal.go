@@ -21,6 +21,8 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"sync"
+	"time"
 
 	cpb "github.com/google/osv-scalibr/binary/proto/config_go_proto"
 	"github.com/google/osv-scalibr/enricher"
@@ -34,11 +36,27 @@ import (
 
 const (
 	// Name is the unique name of this Enricher.
-	Name    = "vulnmatch/osvlocal"
-	version = 1
+	Name                    = "vulnmatch/osvlocal"
+	version                 = 1
+	sharedCacheEnabledKey   = Name + "/enabled"
+	sharedMatcherCacheKey   = Name + "/matcher-pool"
+	sharedDBRefreshInterval = time.Hour
 )
 
 var _ enricher.Enricher = &Enricher{}
+
+// EnableSharedDatabaseCache configures OSV local enrichers created from cfg to
+// share fully loaded ecosystem databases. Long-running servers should enable
+// this once and reuse cfg across scans.
+func EnableSharedDatabaseCache(cfg *config.PluginConfig) {
+	if cfg == nil {
+		return
+	}
+	if cfg.SharedCache == nil {
+		cfg.SharedCache = config.NewSharedCache()
+	}
+	cfg.SharedCache.GetOrCreate(sharedCacheEnabledKey, func() any { return true })
+}
 
 // Enricher uses the OSV.dev zip databases to find vulnerabilities in the inventory packages
 type Enricher struct {
@@ -48,6 +66,34 @@ type Enricher struct {
 	localPath  string
 	download   bool
 	httpClient *http.Client
+	matcher    *localMatcher
+}
+
+type matcherConfig struct {
+	remoteHost string
+	userAgent  string
+	localPath  string
+	download   bool
+	httpClient *http.Client
+}
+
+type matcherPool struct {
+	mu       sync.Mutex
+	matchers map[matcherConfig]*localMatcher
+}
+
+func (p *matcherPool) get(cfg matcherConfig) (*localMatcher, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if matcher, ok := p.matchers[cfg]; ok {
+		return matcher, nil
+	}
+	matcher, err := newSharedLocalMatcher(cfg.localPath, cfg.userAgent, cfg.download, cfg.remoteHost, cfg.httpClient, sharedDBRefreshInterval)
+	if err != nil {
+		return nil, err
+	}
+	p.matchers[cfg] = matcher
+	return matcher, nil
 }
 
 // New makes a new osvlocal.Enricher with the given config.
@@ -76,13 +122,30 @@ func New(cfg *config.PluginConfig) (enricher.Enricher, error) {
 		download = specific.Download
 	}
 
-	return &Enricher{
+	e := &Enricher{
 		zippedDBRemoteHost: remoteHost,
 		userAgent:          userAgent,
 		localPath:          localPath,
 		download:           download,
 		httpClient:         httpClient,
-	}, nil
+	}
+	sharedCacheEnabled := false
+	if cfg.SharedCache != nil {
+		value, ok := cfg.SharedCache.Get(sharedCacheEnabledKey)
+		sharedCacheEnabled, _ = value.(bool)
+		sharedCacheEnabled = ok && sharedCacheEnabled
+	}
+	if sharedCacheEnabled {
+		pool := cfg.SharedCache.GetOrCreate(sharedMatcherCacheKey, func() any {
+			return &matcherPool{matchers: make(map[matcherConfig]*localMatcher)}
+		}).(*matcherPool)
+		matcher, err := pool.get(matcherConfig{remoteHost, userAgent, localPath, download, httpClient})
+		if err != nil {
+			return nil, err
+		}
+		e.matcher = matcher
+	}
+	return e, nil
 }
 
 func newForTesting(zippedDBRemoteHost string) enricher.Enricher {
@@ -132,16 +195,13 @@ func (e *Enricher) Enrich(ctx context.Context, _ *enricher.ScanInput, inv *inven
 	if e.httpClient == nil {
 		return fmt.Errorf("client not configured for %s", Name)
 	}
-	dbs, err := newlocalMatcher(
-		e.localPath,
-		e.userAgent,
-		e.download,
-		e.zippedDBRemoteHost,
-		e.httpClient,
-	)
-
-	if err != nil {
-		return err
+	dbs := e.matcher
+	if dbs == nil {
+		var err error
+		dbs, err = newlocalMatcher(e.localPath, e.userAgent, e.download, e.zippedDBRemoteHost, e.httpClient)
+		if err != nil {
+			return err
+		}
 	}
 
 	for _, pkg := range inv.Packages {

@@ -20,6 +20,8 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"sync"
+	"time"
 
 	osvutil "github.com/google/osv-scalibr/enricher/vulnmatch/internal/osvutil"
 	"github.com/google/osv-scalibr/extractor"
@@ -36,13 +38,25 @@ type localMatcher struct {
 	zippedDBRemoteHost string
 
 	dbBasePath string
-	dbs        map[osvconstants.Ecosystem]*zipDB
+	mu         sync.Mutex
+	dbs        map[osvconstants.Ecosystem]*cachedDB
 	downloadDB bool
-	// failedDBs keeps track of the errors when getting databases for each ecosystem
-	failedDBs map[osvconstants.Ecosystem]error
+	// fullLoad loads every advisory in an ecosystem. This is required when the
+	// matcher is reused across scans whose package sets differ.
+	fullLoad bool
+	// refreshInterval controls when a shared database is checked for updates.
+	// A non-positive duration keeps a loaded result for the matcher's lifetime.
+	refreshInterval time.Duration
 	// userAgent sets the user agent requests for db zips are made with
 	userAgent  string
 	httpClient *http.Client
+}
+
+type cachedDB struct {
+	mu          sync.Mutex
+	db          *zipDB
+	err         error
+	lastAttempt time.Time
 }
 
 func newlocalMatcher(localDBPath string, userAgent string, downloadDB bool, zippedDBRemoteHost string, httpClient *http.Client) (*localMatcher, error) {
@@ -55,12 +69,21 @@ func newlocalMatcher(localDBPath string, userAgent string, downloadDB bool, zipp
 		zippedDBRemoteHost: zippedDBRemoteHost,
 
 		dbBasePath: dbBasePath,
-		dbs:        make(map[osvconstants.Ecosystem]*zipDB),
+		dbs:        make(map[osvconstants.Ecosystem]*cachedDB),
 		downloadDB: downloadDB,
 		userAgent:  userAgent,
-		failedDBs:  make(map[osvconstants.Ecosystem]error),
 		httpClient: httpClient,
 	}, nil
+}
+
+func newSharedLocalMatcher(localDBPath string, userAgent string, downloadDB bool, zippedDBRemoteHost string, httpClient *http.Client, refreshInterval time.Duration) (*localMatcher, error) {
+	matcher, err := newlocalMatcher(localDBPath, userAgent, downloadDB, zippedDBRemoteHost, httpClient)
+	if err != nil {
+		return nil, err
+	}
+	matcher.fullLoad = true
+	matcher.refreshInterval = refreshInterval
+	return matcher, nil
 }
 
 func (matcher *localMatcher) MatchVulnerabilities(ctx context.Context, pkg *extractor.Package, pkgs []*extractor.Package) ([]*osvpb.Vulnerability, error) {
@@ -91,12 +114,27 @@ func (matcher *localMatcher) MatchVulnerabilities(ctx context.Context, pkg *extr
 }
 
 func (matcher *localMatcher) loadDBFromCache(ctx context.Context, eco osvconstants.Ecosystem, invs []*extractor.Package) (*zipDB, error) {
-	if db, ok := matcher.dbs[eco]; ok {
-		return db, nil
+	matcher.mu.Lock()
+	entry, ok := matcher.dbs[eco]
+	if !ok {
+		entry = &cachedDB{}
+		matcher.dbs[eco] = entry
+	}
+	matcher.mu.Unlock()
+
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+
+	if !entry.lastAttempt.IsZero() && (matcher.refreshInterval <= 0 || time.Since(entry.lastAttempt) < matcher.refreshInterval) {
+		if entry.db != nil {
+			return entry.db, nil
+		}
+		return nil, entry.err
 	}
 
-	if matcher.failedDBs[eco] != nil {
-		return nil, matcher.failedDBs[eco]
+	packages := invs
+	if matcher.fullLoad {
+		packages = nil
 	}
 
 	db, err := newZippedDB(
@@ -106,20 +144,25 @@ func (matcher *localMatcher) loadDBFromCache(ctx context.Context, eco osvconstan
 		fmt.Sprintf("%s/%s/all.zip", matcher.zippedDBRemoteHost, eco),
 		matcher.userAgent,
 		!matcher.downloadDB,
-		invs,
+		packages,
 		matcher.httpClient,
 	)
+	entry.lastAttempt = time.Now()
 
 	if err != nil {
-		matcher.failedDBs[eco] = err
+		entry.err = err
+		if entry.db != nil {
+			log.Warnf("could not refresh db for %s ecosystem; using cached database: %v", eco, err)
+			return entry.db, nil
+		}
 		log.Errorf("could not load db for %s ecosystem: %v", eco, err)
-
-		return nil, err
+		return nil, entry.err
 	}
 
 	log.Infof("Loaded %s local db from %s", db.Name, db.StoredAt)
 
-	matcher.dbs[eco] = db
+	entry.db = db
+	entry.err = nil
 
 	return db, nil
 }

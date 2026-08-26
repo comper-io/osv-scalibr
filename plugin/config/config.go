@@ -36,6 +36,42 @@ import (
 type PluginConfig struct {
 	ProtoConfig     *cpb.PluginConfig
 	ClientFactories ClientFactories
+	// SharedCache allows plugin instances created from this config to reuse
+	// process-scoped state. It is opt-in so one-shot scans retain their existing
+	// lifecycle, while long-running callers can share immutable loaded data.
+	SharedCache *SharedCache
+}
+
+// SharedCache stores process-scoped plugin state for a shared PluginConfig.
+// Values are initialized at most once per key.
+type SharedCache struct {
+	mu     sync.Mutex
+	values map[string]any
+}
+
+// NewSharedCache creates an empty process-scoped plugin cache.
+func NewSharedCache() *SharedCache {
+	return &SharedCache{values: make(map[string]any)}
+}
+
+// GetOrCreate returns the value for key, initializing it atomically when absent.
+func (c *SharedCache) GetOrCreate(key string, create func() any) any {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if value, ok := c.values[key]; ok {
+		return value
+	}
+	value := create()
+	c.values[key] = value
+	return value
+}
+
+// Get returns a previously initialized value.
+func (c *SharedCache) Get(key string) (any, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	value, ok := c.values[key]
+	return value, ok
 }
 
 // ClientFactories defines methods to obtain shared clients and connections.
