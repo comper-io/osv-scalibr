@@ -110,7 +110,11 @@ func (matcher *localMatcher) MatchVulnerabilities(ctx context.Context, pkg *extr
 		return nil, err
 	}
 
-	return VulnerabilitiesAffectingPackage(db.Vulnerabilities, pkg), nil
+	candidates := db.Vulnerabilities
+	if eco != "GIT" {
+		candidates = db.vulnerabilitiesByPackage[np.Name]
+	}
+	return VulnerabilitiesAffectingPackage(candidates, pkg), nil
 }
 
 func (matcher *localMatcher) loadDBFromCache(ctx context.Context, eco osvconstants.Ecosystem, invs []*extractor.Package) (*zipDB, error) {

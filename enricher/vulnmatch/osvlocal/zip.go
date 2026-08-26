@@ -47,6 +47,9 @@ type zipDB struct {
 	StoredAt string
 	// the vulnerabilities that are loaded into this database
 	Vulnerabilities []*osvpb.Vulnerability
+	// vulnerabilitiesByPackage avoids scanning the full ecosystem database for
+	// every package in long-running, fully loaded matchers.
+	vulnerabilitiesByPackage map[string][]*osvpb.Vulnerability
 	// User agent to query with
 	UserAgent  string
 	httpClient *http.Client
@@ -196,6 +199,18 @@ func (db *zipDB) loadZipFile(zipFile *zip.File, names []string) {
 	// that might actually affect those packages, rather than all advisories
 	if len(names) == 0 || mightAffectPackages(vulnerability, names) {
 		db.Vulnerabilities = append(db.Vulnerabilities, vulnerability)
+		indexedNames := make(map[string]struct{})
+		for _, affected := range vulnerability.GetAffected() {
+			name := affected.GetPackage().GetName()
+			if name == "" {
+				continue
+			}
+			if _, ok := indexedNames[name]; ok {
+				continue
+			}
+			indexedNames[name] = struct{}{}
+			db.vulnerabilitiesByPackage[name] = append(db.vulnerabilitiesByPackage[name], vulnerability)
+		}
 	}
 }
 
@@ -210,6 +225,7 @@ func (db *zipDB) loadZipFile(zipFile *zip.File, names []string) {
 // modified, per HTTP caching standards.
 func (db *zipDB) load(ctx context.Context, names []string) error {
 	db.Vulnerabilities = []*osvpb.Vulnerability{}
+	db.vulnerabilitiesByPackage = make(map[string][]*osvpb.Vulnerability)
 
 	body, err := db.fetchZip(ctx)
 
