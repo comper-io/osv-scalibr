@@ -55,6 +55,7 @@ type localMatcher struct {
 type cachedDB struct {
 	mu          sync.Mutex
 	db          *zipDB
+	sqlite      *sqliteStore
 	err         error
 	lastAttempt time.Time
 }
@@ -104,6 +105,14 @@ func (matcher *localMatcher) MatchVulnerabilities(ctx context.Context, pkg *extr
 		eco = "GIT"
 	}
 
+	if matcher.fullLoad {
+		store, err := matcher.loadSQLiteStore(ctx, eco)
+		if err != nil {
+			return nil, err
+		}
+		return store.Match(ctx, np.Name, eco == "GIT", pkg)
+	}
+
 	db, err := matcher.loadDBFromCache(ctx, eco, pkgs)
 
 	if err != nil {
@@ -115,6 +124,41 @@ func (matcher *localMatcher) MatchVulnerabilities(ctx context.Context, pkg *extr
 		candidates = db.vulnerabilitiesByPackage[np.Name]
 	}
 	return VulnerabilitiesAffectingPackage(candidates, pkg), nil
+}
+
+func (matcher *localMatcher) loadSQLiteStore(ctx context.Context, eco osvconstants.Ecosystem) (*sqliteStore, error) {
+	matcher.mu.Lock()
+	entry, ok := matcher.dbs[eco]
+	if !ok {
+		entry = &cachedDB{}
+		matcher.dbs[eco] = entry
+	}
+	matcher.mu.Unlock()
+
+	entry.mu.Lock()
+	if entry.sqlite == nil {
+		store, err := newSQLiteStore(sqliteStoreConfig{
+			name:            string(eco),
+			dbBasePath:      matcher.dbBasePath,
+			archiveURL:      fmt.Sprintf("%s/%s/all.zip", matcher.zippedDBRemoteHost, eco),
+			userAgent:       matcher.userAgent,
+			offline:         !matcher.downloadDB,
+			httpClient:      matcher.httpClient,
+			refreshInterval: matcher.refreshInterval,
+		})
+		if err != nil {
+			entry.mu.Unlock()
+			return nil, err
+		}
+		entry.sqlite = store
+	}
+	store := entry.sqlite
+	entry.mu.Unlock()
+
+	if err := store.Ensure(ctx); err != nil {
+		return nil, err
+	}
+	return store, nil
 }
 
 func (matcher *localMatcher) loadDBFromCache(ctx context.Context, eco osvconstants.Ecosystem, invs []*extractor.Package) (*zipDB, error) {

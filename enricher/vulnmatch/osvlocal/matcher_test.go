@@ -49,7 +49,10 @@ func sharedMatcherTestServer(t *testing.T, requests *atomic.Int32) *httptest.Ser
 	})
 	return fakeserver.CreateZipServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
-		_, _ = w.Write(archive)
+		w.Header().Set("X-Goog-Hash", "crc32c="+fakeserver.ComputeCRC32CHash(t, archive))
+		if _, err := w.Write(archive); err != nil {
+			t.Error(err)
+		}
 	})
 }
 
@@ -69,8 +72,14 @@ func TestSharedLocalMatcherLoadsFullDatabaseOnce(t *testing.T) {
 	if vulns, err := matcher.MatchVulnerabilities(t.Context(), packageB, []*extractor.Package{packageB}); err != nil || len(vulns) != 1 {
 		t.Fatalf("second match returned %d vulnerabilities, %v", len(vulns), err)
 	}
-	if got := requests.Load(); got != 1 {
-		t.Fatalf("database requests = %d, want 1", got)
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("database requests = %d, want 2 (one HEAD and one GET)", got)
+	}
+	matcher.mu.Lock()
+	entry := matcher.dbs["npm"]
+	matcher.mu.Unlock()
+	if entry == nil || entry.sqlite == nil || entry.db != nil {
+		t.Fatalf("shared matcher retained an in-memory zip database: %+v", entry)
 	}
 }
 
@@ -105,8 +114,8 @@ func TestSharedLocalMatcherSerializesInitialLoad(t *testing.T) {
 	for err := range errs {
 		t.Error(err)
 	}
-	if got := requests.Load(); got != 1 {
-		t.Fatalf("database requests = %d, want 1", got)
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("database requests = %d, want 2 (one HEAD and one GET)", got)
 	}
 }
 
